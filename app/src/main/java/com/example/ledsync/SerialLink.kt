@@ -6,7 +6,11 @@ import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 
 /** Sends Adalight frames ("Ada" + count-1 hi/lo + checksum + RGB bytes) over USB serial. */
-class SerialLink(private val ctx: Context, private val dtrRts: Boolean = Config.DTR_RTS) {
+class SerialLink(
+    private val ctx: Context,
+    private val dtrRts: Boolean = Config.DTR_RTS,
+    private val baud: Int = Config.BAUD
+) {
     private var port: UsbSerialPort? = null
     var info: String = ""
     private val header = byteArrayOf(
@@ -27,7 +31,7 @@ class SerialLink(private val ctx: Context, private val dtrRts: Boolean = Config.
                 ?: run { info = "Could not open USB device"; return false }
             val p = driver.ports[0]
             p.open(conn)
-            p.setParameters(Config.BAUD, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+            p.setParameters(baud, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
             if (dtrRts) {
                 try { p.setDTR(true) } catch (_: Exception) { }
                 try { p.setRTS(true) } catch (_: Exception) { }
@@ -41,9 +45,31 @@ class SerialLink(private val ctx: Context, private val dtrRts: Boolean = Config.
         }
     }
 
+    private var lastRetry = 0L
+
     fun send(rgb: ByteArray) {
         rgb.copyInto(frame, header.size)
-        try { port?.write(frame, 200); Status.frames++ } catch (e: Exception) { Status.err = "Write error: $e" }
+        val p = port
+        if (p == null) { retry(); return }
+        try {
+            p.write(frame, 200)
+            Status.frames++
+            if (Status.err.isNotEmpty()) Status.err = ""
+        } catch (e: Exception) {
+            Status.err = "Link dropped, reconnecting: ${e.message}"
+            try { p.close() } catch (_: Exception) { }
+            port = null
+            lastRetry = 0
+        }
+    }
+
+    /** Reopens the USB port at most once a second after a failure. */
+    private fun retry() {
+        val now = System.currentTimeMillis()
+        if (now - lastRetry < 1000) return
+        lastRetry = now
+        if (open()) Status.err = "Reconnected"
+        else Status.err = "Reconnecting failed: $info"
     }
 
     fun close() {
