@@ -13,6 +13,7 @@ object Config {
     val BOTTOM = TOTAL * 16 / 50
     val TOP = TOTAL - LEFT - RIGHT - BOTTOM
 
+    const val DTR_RTS = false        // some boards need this on; the Test button tries both
     const val BAUD = 115200         // try 500000 only if your box supports it
     const val BRIGHTNESS = 0.8f     // 0..1
     const val SMOOTHING = 0.5f      // 0 = none, closer to 1 = softer

@@ -58,7 +58,8 @@ class CaptureService : Service() {
 
         handler.post {
             val l = SerialLink(this)
-            if (!l.open()) { stopSelf(); return@post }
+            if (!l.open()) { Status.text = "Failed: ${l.info}"; stopSelf(); return@post }
+            Status.text = "Running. ${l.info}"
             link = l
             Thread.sleep(1800) // board may reset when the port opens
 
