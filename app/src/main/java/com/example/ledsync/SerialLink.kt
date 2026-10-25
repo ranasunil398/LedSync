@@ -25,17 +25,20 @@ class SerialLink(private val ctx: Context) {
         val p = driver.ports[0]
         p.open(conn)
         p.setParameters(Config.BAUD, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+        // PC programs raise DTR/RTS when opening the port; some boards (USB-native ones) need it.
+        try { p.setDTR(true) } catch (_: Exception) { }
+        try { p.setRTS(true) } catch (_: Exception) { }
         port = p
         return true
     }
 
     fun send(rgb: ByteArray) {
         rgb.copyInto(frame, header.size)
-        try { port?.write(frame, 100) } catch (_: Exception) { }
+        try { port?.write(frame, 200) } catch (_: Exception) { }
     }
 
     fun close() {
-        try { port?.write(frame.also { java.util.Arrays.fill(it, header.size, it.size, 0) }, 100) } catch (_: Exception) { }
+        try { port?.write(frame.also { java.util.Arrays.fill(it, header.size, it.size, 0) }, 200) } catch (_: Exception) { }
         try { port?.close() } catch (_: Exception) { }
         port = null
     }
