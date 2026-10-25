@@ -17,6 +17,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Process
+import kotlin.math.max
 import kotlin.math.min
 
 class CaptureService : Service() {
@@ -24,11 +26,18 @@ class CaptureService : Service() {
     private var display: VirtualDisplay? = null
     private var reader: ImageReader? = null
     private var link: SerialLink? = null
-    private val thread = HandlerThread("ledsync").apply { start() }
+    // Low priority so video playback always wins the CPU.
+    private val thread = HandlerThread("ledsync", Process.THREAD_PRIORITY_BACKGROUND).apply { start() }
     private val handler by lazy { Handler(thread.looper) }
     private val smooth = FloatArray(Config.TOTAL * 3)
     private val out = ByteArray(Config.TOTAL * 3)
     private var lastFrame = 0L
+
+    // Never send faster than the serial link can carry (6 header bytes + RGB, 10 bits per byte).
+    private val minInterval: Long = max(
+        1000L / Config.MAX_FPS,
+        ((6 + Config.TOTAL * 3) * 10_000L) / Config.BAUD + 2
+    )
 
     override fun onBind(i: Intent?): IBinder? = null
 
@@ -51,7 +60,7 @@ class CaptureService : Service() {
             val l = SerialLink(this)
             if (!l.open()) { stopSelf(); return@post }
             link = l
-            Thread.sleep(1800) // Arduino resets when the port opens
+            Thread.sleep(1800) // board may reset when the port opens
 
             val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val mp = mpm.getMediaProjection(code, data)
@@ -68,7 +77,7 @@ class CaptureService : Service() {
                 val img = rd.acquireLatestImage() ?: return@setOnImageAvailableListener
                 try {
                     val now = System.currentTimeMillis()
-                    if (now - lastFrame >= 1000 / Config.MAX_FPS) {
+                    if (now - lastFrame >= minInterval) {
                         lastFrame = now
                         process(img)
                         link?.send(out)
@@ -94,18 +103,20 @@ class CaptureService : Service() {
         var idx = 0
 
         fun zone(x0: Int, y0: Int, x1: Int, y1: Int) {
+            val xe = max(x1, x0 + 1).coerceAtMost(w)
+            val ye = max(y1, y0 + 1).coerceAtMost(h)
             var r = 0L; var g = 0L; var b = 0L; var n = 0
             var y = y0
-            while (y < y1) {
+            while (y < ye) {
                 var x = x0
-                while (x < x1) {
+                while (x < xe) {
                     val o = y * rs + x * 4
                     r += buf.get(o).toInt() and 0xFF
                     g += buf.get(o + 1).toInt() and 0xFF
                     b += buf.get(o + 2).toInt() and 0xFF
-                    n++; x += 2
+                    n++; x++
                 }
-                y += 2
+                y++
             }
             if (n == 0) n = 1
             val a = Config.SMOOTHING
@@ -117,13 +128,9 @@ class CaptureService : Service() {
             idx++
         }
 
-        // left edge, bottom -> top
         for (i in 0 until Config.LEFT) zone(0, h - (i + 1) * h / Config.LEFT, depth, h - i * h / Config.LEFT)
-        // top edge, left -> right
         for (i in 0 until Config.TOP) zone(i * w / Config.TOP, 0, (i + 1) * w / Config.TOP, depth)
-        // right edge, top -> bottom
         for (i in 0 until Config.RIGHT) zone(w - depth, i * h / Config.RIGHT, w, (i + 1) * h / Config.RIGHT)
-        // bottom edge, right -> left
         for (i in 0 until Config.BOTTOM) zone(w - (i + 1) * w / Config.BOTTOM, h - depth, w - i * w / Config.BOTTOM, h)
     }
 
